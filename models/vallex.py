@@ -778,7 +778,7 @@ class VALLE(VALLF):
                     )
                     logits = predict_layer(xy_dec[:, text_len + prefix_len :])
 
-                if onnx_export:
+                if True:#onnx_export:
                     if i == 0:
                         print("Export nar_decoder to onnx")
                         print("xy_pos.shape",xy_pos.shape)
@@ -794,8 +794,8 @@ class VALLE(VALLF):
                             input_names=["xy_pos", "i"],
                             output_names=["xy_dec"],
                             dynamic_axes={
-                                "xy_pos": [1],
-                                "xy_dec": [1]
+                                "xy_pos": {1:"num_sequence"},
+                                "xy_dec": {1:"num_sequence"}
                             },
                             verbose=False, opset_version=15
                         )
@@ -810,8 +810,8 @@ class VALLE(VALLF):
                             input_names=["xy_pos", "i"],
                             output_names=["logits"],
                             dynamic_axes={
-                                "xy_pos": [1],
-                                "logits": [1]
+                                "xy_pos": {1:"num_sequence"},
+                                "logits": {1:"num_sequence"}
                             },
                             verbose=False, opset_version=15
                         )           
@@ -822,7 +822,8 @@ class VALLE(VALLF):
                     offset_tensor = np.zeros((1))
                     offset_tensor[0] = i
                     print(xy_pos.shape, offset_tensor.shape)
-                    xy_dec = nar_decoder.run([xy_pos.numpy(), offset_tensor])[0]
+                    #xy_dec = nar_decoder.run([xy_pos.numpy(), offset_tensor])[0] # Normal inference
+                    xy_dec = nar_decoder.run([xy_pos.numpy()[:, 0:-1, :], offset_tensor])[0] # Test trim
                     end = int(round(time.time() * 1000))
                     xy_dec = torch.from_numpy(xy_dec)
                     if benchmark:
