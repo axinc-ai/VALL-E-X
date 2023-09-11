@@ -90,7 +90,7 @@ def preload_models():
     
     vocos = Vocos.from_pretrained('charactr/vocos-encodec-24khz').to(device)
 
-def reimpl_vocos_head(x): # for onnx
+def export_vocos_head(x): # for onnx
     #print("linear weight", vocos.head.out.weight.shape) # torch.Size([1282, 384])
     x = vocos.head.out(x).transpose(1, 2)
     mag, p = x.chunk(2, dim=1)
@@ -106,15 +106,22 @@ def reimpl_vocos_head(x): # for onnx
     # better directly produce the complex value 
     return mag, x, y
 
-def reimpl_vocos_istft(mag, x, y): # for onnx
-    S = mag * (x + 1j * y)
-    n_fft = vocos.head.istft.n_fft
-    hop_length = vocos.head.istft.hop_length
-    win_length = vocos.head.istft.win_length
+def export_vocos_istft(x, y): # for onnx
+    S = (x + 1j * y)
+    n_fft = vocos.head.istft.n_fft # 1280
+    hop_length = vocos.head.istft.hop_length # 320
+    win_length = vocos.head.istft.win_length # 1280
     window = vocos.head.istft.window
     print("istft settings", n_fft, hop_length, win_length, window)
     audio = torch.istft(S, n_fft, hop_length, win_length, window, center=True)
     return audio
+
+def export_vocos(frames):
+    features = vocos.codes_to_features(frames)
+    x = vocos.backbone(features)
+    mag, x, y = export_vocos_head(x)
+    return mag * x, mag * y
+
 
 @torch.no_grad()
 def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
@@ -207,95 +214,32 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
         #print("vocos.head output", samples.shape) # torch.Size([1, 112000])
 
         print("Export vocos to onnx")
-        vocos.forward = vocos.codes_to_features
+        vocos.forward = export_vocos
         torch.onnx.export(
             vocos,
             (frames),
-            "vocos_codes_to_features.onnx",
+            "vocos.onnx",
             input_names=["frames"],
-            output_names=["features"],
+            output_names=["x", "y"],
             dynamic_axes={
                 "frames": [2],
-                "features": [2]
+                "x": [2],
+                "y": [2],
             },
             verbose=False, opset_version=15
         )           
 
-        # vocosのmodels.pyのforwardでbandwidth_id = torch.tensor([2])として値を代入する必要がある
-
-        vocos.forward = vocos.backbone.forward
-        torch.onnx.export(
-            vocos,
-            (features),
-            "vocos_backbone.onnx",
-            input_names=["features"],
-            output_names=["x"],
-            dynamic_axes={
-                "features": [2],
-                "x": [2]
-            },
-            verbose=False, opset_version=15
-        )
-
-        # head
-
-        #print(x.shape) 
-        #mag, x2, y = reimpl_vocos_head(x) # ([1, 235, 384])
-        #print(mag.shape) # torch.Size([1, 641, 235])
-        #print(x2.shape) # torch.Size([1, 641, 235])
-        #print(y.shape) # torch.Size([1, 641, 235])
-
-        vocos.forward = reimpl_vocos_head
-        torch.onnx.export(
-            vocos,
-            (x),
-            "vocos_head.onnx",
-            input_names=["x"],
-            output_names=["input", "x", "y"],
-            dynamic_axes={
-                "input": [1],
-                "x": [2],
-                "y": [2],
-                "mag": [2]
-            },
-            verbose=False, opset_version=15
-        )
-
-        # Check head kind
-        print(vocos.head) # ISTFTHead
-
     if onnx_import_vocos:
         print("Impot vocos from onnx")
-        vcnet = ailia.Net(weight="vocos_codes_to_features.onnx", env_id = 1, memory_mode = 11)
+        vnet = ailia.Net(weight="vocos.onnx", env_id = 1, memory_mode = 11)
         start = int(round(time.time() * 1000))
-        features = vcnet.run([frames.numpy()])[0]
+        x, y = vnet.run([frames.numpy()])
         end = int(round(time.time() * 1000))
-        features = torch.from_numpy(features)
-        if benchmark:
-            print(f'ailia processing time {end - start} ms')
-
-        vnet = ailia.Net(weight="vocos_backbone.onnx", env_id = 1, memory_mode = 11)
-        start = int(round(time.time() * 1000))
-        x = vnet.run([features.numpy()])[0]
-        end = int(round(time.time() * 1000))
-        x = torch.from_numpy(x)
-        if benchmark:
-            print(f'ailia processing time {end - start} ms')
-        
-        hnet = ailia.Net(weight="vocos_head.onnx", env_id = 1, memory_mode = 11)
-        start = int(round(time.time() * 1000))
-        mag, x, y = hnet.run([x.numpy()])
-        end = int(round(time.time() * 1000))
-        mag = torch.from_numpy(mag)
         x = torch.from_numpy(x)
         y = torch.from_numpy(y)
         if benchmark:
             print(f'ailia processing time {end - start} ms')
-
-        #samples = vocos.head(x) # isftf
-        #mag, x, y = reimpl_vocos_head(x)
-        #print(mag.shape, x.shape, y.shape)
-        samples = reimpl_vocos_istft(mag, x, y)
+        samples = export_vocos_istft(x, y)
 
     return samples.squeeze().cpu().numpy()
 
