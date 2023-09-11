@@ -90,6 +90,28 @@ def preload_models():
     
     vocos = Vocos.from_pretrained('charactr/vocos-encodec-24khz').to(device)
 
+def reimpl_vocos_head(x):
+    x = vocos.head.out(x).transpose(1, 2)
+    mag, p = x.chunk(2, dim=1)
+    mag = torch.exp(mag)
+    mag = torch.clip(mag, max=1e2)  # safeguard to prevent excessively large magnitudes
+    # wrapping happens here. These two lines produce real and imaginary value
+    x = torch.cos(p)
+    y = torch.sin(p)
+    # recalculating phase here does not produce anything new
+    # only costs time
+    # phase = torch.atan2(y, x)
+    # S = mag * torch.exp(phase * 1j)
+    # better directly produce the complex value 
+    S = mag * (x + 1j * y)
+    n_fft = vocos.head.istft.n_fft
+    hop_length = vocos.head.istft.hop_length
+    win_length = vocos.head.istft.win_length
+    window = vocos.head.istft.window
+    print(n_fft, hop_length, win_length, window)
+    audio = torch.istft(S, n_fft, hop_length, win_length, window, center=True)
+    return audio
+
 @torch.no_grad()
 def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
     onnx_export = False
@@ -160,14 +182,23 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
     # Decode with Vocos
     frames = encoded_frames.permute(2,0,1)
     features = vocos.codes_to_features(frames)
-    samples = vocos.decode(features, bandwidth_id=torch.tensor([2], device=device))
+    
+    # original
+    #samples = vocos.decode(features, bandwidth_id=torch.tensor([2], device=device))
+
+    # divide head
+    x = vocos.backbone(features, bandwidth_id=torch.tensor([2], device=device))
+    samples = vocos.head(x) # isftf
 
     if onnx_export_vocos:
-        print("vocos.codes_to_features input", frames.shape) # torch.Size([8, 1, 326])
-        print("vocos.codes_to_features output", features.shape) # torch.Size([1, 128, 326])
+        print("vocos.codes_to_features input", frames.shape) # torch.Size([8, 1, 350])
+        print("vocos.codes_to_features output", features.shape) # torch.Size([1, 128, 350])
 
-        print("vocos.decode input", features.shape) # torch.Size([1, 128, 326])
-        print("vocos.decode output", samples.shape) # torch.Size([1, 104320])
+        print("vocos.backbone input", features.shape) # torch.Size([1, 128, 350])
+        print("vocos.backbone output", x.shape) # torch.Size([1, 350, 384])
+
+        print("vocos.head input", x.shape) # torch.Size([1, 350, 384])
+        print("vocos.head output", samples.shape) # torch.Size([1, 112000])
 
         print("Export vocos to onnx")
         vocos.forward = vocos.codes_to_features
@@ -184,38 +215,44 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
             verbose=False, opset_version=15
         )           
 
-        # vocosのforwardを書き換えてbandwidth_idをOptionalではなくする必要がある
+        # vocosのmodels.pyのforwardでbandwidth_id = torch.tensor([2])として値を代入する必要がある
 
-        vocos.forward = vocos.decode
+        vocos.forward = vocos.backbone.forward
         torch.onnx.export(
             vocos,
-            (features, torch.tensor([2], device=device)),
-            "vocos_decode.onnx",
-            input_names=["features", "bandwidth_id"],
-            output_names=["samples"],
+            (features),
+            "vocos_backbone.onnx",
+            input_names=["features"],
+            output_names=["x"],
             dynamic_axes={
                 "features": [2],
-                "samples": [1]
+                "x": [2]
             },
             verbose=False, opset_version=15
         )
+
+        # Check head kind
+        print(vocos.head) # ISTFTHead
     if onnx_import_vocos:
         print("Impot vocos from onnx")
         vcnet = ailia.Net(weight="vocos_codes_to_features.onnx", env_id = 1, memory_mode = 11)
         start = int(round(time.time() * 1000))
-        features = vcnet.run([frames.numpy()])
+        features = vcnet.run([frames.numpy()])[0]
         end = int(round(time.time() * 1000))
         features = torch.from_numpy(features)
         if benchmark:
             print(f'ailia processing time {end - start} ms')
 
-        vnet = ailia.Net(weight="vocos_decode.onnx", env_id = 1, memory_mode = 11)
+        vnet = ailia.Net(weight="vocos_backbone.onnx", env_id = 1, memory_mode = 11)
         start = int(round(time.time() * 1000))
-        samples = vnet.run([features.numpy(), torch.tensor([2], device=device).numpy()])
+        x = vnet.run([features.numpy()])[0]
         end = int(round(time.time() * 1000))
-        samples = torch.from_numpy(samples)
+        x = torch.from_numpy(x)
         if benchmark:
             print(f'ailia processing time {end - start} ms')
+        
+        #samples = vocos.head(x) # isftf
+        samples = reimpl_vocos_head(x)
 
     return samples.squeeze().cpu().numpy()
 
