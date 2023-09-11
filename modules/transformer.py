@@ -451,21 +451,32 @@ class TransformerEncoder(nn.Module):
         src_key_padding_mask: Optional[Tensor] = None,
         return_layer_states: bool = False,
         past_kv: Optional[Tensor] = None,
-        use_cache: bool = False,
+        offset = 0
     ):
-        if past_kv is None:
-            past_length = 0
-            past_kv = tuple([None] * self.num_layers)
-        else:
-            past_length = past_kv[0][0].size(-2)
-        new_kv = () if use_cache else None
+        use_cache = True
+        #if past_kv is None:
+        #    past_length = 0
+        #    past_kv = tuple([None] * self.num_layers)
+        #else:
+        #    #past_length = past_kv[0][0].size(-2)
+        #    past_length = offset
+        new_kv = torch.zeros(past_kv.shape)#() if use_cache else None
         output = src
-        for mod, past_layer_kv in zip(self.layers, past_kv):
+        layer_idx = 0
+        for mod in self.layers: # 12 layers
+            past_layer_kv = [past_kv[layer_idx,0,:,:,0:offset,:], past_kv[layer_idx,1,:,:,0:offset,:]]
             output, kv = mod.infer(
                 output, src_mask=mask, src_key_padding_mask=src_key_padding_mask, past_kv=past_layer_kv, use_cache=use_cache
             )
             if use_cache:
-                new_kv = new_kv + (kv,)
+                #print(new_kv.shape)
+                #print(kv[0].shape)
+                #print(kv[1].shape)
+                len = kv[0].shape[-2] - offset # initial promptは長い
+                #print(len)
+                new_kv[layer_idx,0,:,:,0:offset+len,:] = kv[0]
+                new_kv[layer_idx,1,:,:,0:offset+len,:] = kv[1]
+            layer_idx = layer_idx + 1
 
         if self.norm is not None:
             output = self.norm(output)

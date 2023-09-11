@@ -89,6 +89,8 @@ def preload_models():
 
 @torch.no_grad()
 def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
+    onnx_export = True
+
     global model, codec, vocos, text_tokenizer, text_collater
     text = text.replace("\n", "").strip(" ")
     # detect language
@@ -142,11 +144,19 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
         temperature=1,
         prompt_language=lang_pr,
         text_language=langs if accent == "no-accent" else lang,
+        onnx_export=onnx_export
     )
     # Decode with Vocos
     frames = encoded_frames.permute(2,0,1)
     features = vocos.codes_to_features(frames)
     samples = vocos.decode(features, bandwidth_id=torch.tensor([2], device=device))
+
+    if onnx_export:
+        print("vocos.codes_to_features input", frames.shape)
+        print("vocos.codes_to_features output", features.shape)
+
+        print("vocos.decode input", features.shape)
+        print("vocos.decode output", samples.shape)
 
     return samples.squeeze().cpu().numpy()
 

@@ -465,6 +465,7 @@ class VALLE(VALLF):
         temperature: float = 1.0,
         prompt_language: str = None,
         text_language: str = None,
+        onnx_export = False
     ) -> torch.Tensor:
         """
         Args:
@@ -516,7 +517,11 @@ class VALLE(VALLF):
         x_len = x_lens.max()
         x_attn_mask = torch.zeros((x_len, x_len), dtype=torch.bool)
 
-        kv_cache = None
+        max_len = 1024 # TBD
+        kv_cache = torch.zeros((12, 2, 1, 16, max_len, 64))
+        offset = 0
+        # torch.Size([1, 16, n, 64])が12レイヤー * 2ノード分ある
+
         use_kv_caching = True
         while True:
             y_emb = self.ar_audio_embedding(y)
@@ -542,21 +547,29 @@ class VALLE(VALLF):
             ).to(y.device)
 
 
-            if use_kv_caching and kv_cache is not None:
-                xy_pos = xy_pos[:, [-1]]
+            if use_kv_caching and offset>=1:#kv_cache is not None:
+                xy_pos = xy_pos[:, [-1]] # 前回のトークンは1つ
             else:
-                pass
+                pass # initial prompt
 
             xy_dec, kv_cache = self.ar_decoder.infer(
                 xy_pos,
                 mask=xy_attn_mask,
                 past_kv=kv_cache,
-                use_cache=use_kv_caching,
+                offset=offset
             )
-            # xy_dec, _ = self.ar_decoder(
-            #     (xy_pos, None),
-            #     mask=xy_attn_mask,
-            # )
+            offset = offset + xy_pos.shape[-2]
+
+            if onnx_export:
+                # kv_cacheの固定化が必要
+                print("ar_decoder input xy_pos", xy_pos.shape)
+                print("ar_decoder input mask", xy_attn_mask.shape)
+                #for l in range(len(kv_cache)): # layers
+                #    for n in range(len(kv_cache[l])):
+                #        print("ar_decoder input past_kv"+str(l)+"_"+str(n), kv_cache[l][n].shape)
+                print("ar_decoder input use_kv_caching", use_kv_caching)
+                print("ar_decoder output xy_dec", xy_dec.shape)
+                #print("ar_decoder output kv_cache", kv_cache.shape)
 
             logits = self.ar_predict_layer(xy_dec[:, -1])
             samples = topk_sampling(
