@@ -485,8 +485,11 @@ class VALLE(VALLF):
         )
         return xy_dec
 
-    def export_predict_layer(self, xy_pos):
-        return self.predict_layer(xy_pos)
+    def export_predict_layers(self, xy_pos, i):
+        results = torch.zeros((7, xy_pos.shape[0], xy_pos.shape[1], xy_pos.shape[2]))
+        for j in range(7):
+            results[j, :, :, :] = self.nar_predict_layers[j](xy_pos)
+        return results[i].reshape((xy_pos.shape[0], xy_pos.shape[1], xy_pos.shape[2]))
 
     def inference(
         self,
@@ -797,23 +800,22 @@ class VALLE(VALLF):
                             verbose=False, opset_version=15
                         )
 
-                    print("Export nar_predict_layer_"+str(i)+" to onnx")
-                    self.predict_layer = predict_layer
-                    self.forward = self.export_predict_layer
-                    print("xy_dec.shape",xy_dec.shape)
-                    torch.onnx.export(
-                        self,
-                        (xy_dec[:, text_len + prefix_len :]),
-                        "nar_predict_layer_"+str(i)+".onnx",
-                        input_names=["xy_pos"],
-                        output_names=["logits"],
-                        dynamic_axes={
-                            "xy_dec": [1],
-                            "logits": [1]
-                        },
-                        verbose=False, opset_version=15
-                    )           
-                if onnx_import:
+                        print("Export nar_predict_layers to onnx")
+                        self.forward = self.export_predict_layers
+                        print("xy_dec.shape",xy_dec.shape)
+                        torch.onnx.export(
+                            self,
+                            (xy_dec[:, text_len + prefix_len :], iv),
+                            "nar_predict_layers.onnx",
+                            input_names=["xy_pos", "i"],
+                            output_names=["logits"],
+                            dynamic_axes={
+                                "xy_pos": [1],
+                                "logits": [1]
+                            },
+                            verbose=False, opset_version=15
+                        )           
+                if True:#onnx_import:
                     print("Impot nar_decoder from onnx")
                     if i == 0:
                         nar_decoder = ailia.Net(weight="nar_decoder.onnx", env_id = 1, memory_mode = 11)
@@ -826,9 +828,10 @@ class VALLE(VALLF):
                     if benchmark:
                         print(f'ailia processing time {end - start} ms')
 
-                    print("Impot nar_predict_layer_"+str(i)+" from onnx")
-                    nar_predict = ailia.Net(weight="nar_predict_layer_"+str(i)+".onnx", env_id = 1, memory_mode = 11)
-                    logits = nar_predict.run([xy_dec[:, text_len + prefix_len :].numpy()])[0]
+                    print("Impot nar_predict_layers from onnx")
+                    if i == 0:
+                        nar_predict = ailia.Net(weight="nar_predict_layers.onnx", env_id = 1, memory_mode = 11)
+                    logits = nar_predict.run([xy_dec[:, text_len + prefix_len :].numpy(), offset_tensor])[0]
                     end = int(round(time.time() * 1000))
                     logits = torch.from_numpy(logits)
                     if benchmark:
