@@ -458,6 +458,13 @@ class VALLE(VALLF):
         **kwargs,
     ):
         raise NotImplementedError
+
+    def audio_embedding(self, y):
+        y_emb = self.ar_audio_embedding(y)
+        y_emb = self.ar_audio_prenet(y_emb)
+        y_pos = self.ar_audio_position(y_emb)
+        return y_pos
+
     def inference(
         self,
         x: torch.Tensor,
@@ -469,7 +476,8 @@ class VALLE(VALLF):
         prompt_language: str = None,
         text_language: str = None,
         onnx_export = False,
-        onnx_import = True
+        onnx_import = True,
+        benchmark = False
     ) -> torch.Tensor:
         """
         Args:
@@ -529,9 +537,38 @@ class VALLE(VALLF):
 
         use_kv_caching = True
         while True:
-            y_emb = self.ar_audio_embedding(y)
-            y_emb = self.ar_audio_prenet(y_emb)
-            y_pos = self.ar_audio_position(y_emb)
+            if not onnx_import:
+                y_pos = self.audio_embedding(y)
+            if onnx_export:
+                # kv_cacheの固定化が必要
+                #print(y.shape) #(1, 24)
+                #print(y_pos.shape) #(1,23,1024)
+
+                if offset == 0:
+                    print("Export audio_embedding to onnx")
+                    self.forward = self.audio_embedding
+                    torch.onnx.export(
+                        self,
+                        (y),
+                        "audio_embedding.onnx",
+                        input_names=["y"],
+                        output_names=["y_pos"],
+                        dynamic_axes={
+                            "y": [1],
+                            "y_pos": [1]
+                        },
+                        verbose=False, opset_version=15
+                    )           
+            if onnx_import:
+                if offset == 0:
+                    print("Impot audio_embedding from onnx")
+                    anet = ailia.Net(weight="audio_embedding.onnx", env_id = 1, memory_mode = 11)
+                y_pos = anet.run([y.numpy()])
+                end = int(round(time.time() * 1000))
+                y_pos = torch.from_numpy(y_pos)
+                if benchmark:
+                    print(f'ailia processing time {end - start} ms')
+
             xy_pos = torch.concat([x, y_pos], dim=1)
 
             y_len = y.shape[1]
@@ -566,19 +603,19 @@ class VALLE(VALLF):
                     offset=offset
                 )
                 end = int(round(time.time() * 1000))
-                print(f'torch processing time {end - start} ms')
+                if benchmark:
+                    print(f'torch processing time {end - start} ms')
 
             if onnx_export:
                 # kv_cacheの固定化が必要
-                print("ar_decoder input xy_pos", xy_pos.shape) # torch.Size([1, 1, 1024])
-                print("ar_decoder input mask", xy_attn_mask.shape) # torch.Size([61, 61])
-                print("ar_decoder input kv_cache", kv_cache.shape) # torch.Size([12, 2, 1, 16, 1024, 64])
-                print("ar_decoder output xy_dec", xy_dec.shape) # torch.Size([1, 1, 1024])
-                print("ar_decoder output kv_cache", kv_cache.shape) # torch.Size([12, 2, 1, 16, 1024, 64])
+                #print("ar_decoder input xy_pos", xy_pos.shape) # torch.Size([1, 1, 1024])
+                #print("ar_decoder input mask", xy_attn_mask.shape) # torch.Size([61, 61])
+                #print("ar_decoder input kv_cache", kv_cache.shape) # torch.Size([12, 2, 1, 16, 1024, 64])
+                #print("ar_decoder output xy_dec", xy_dec.shape) # torch.Size([1, 1, 1024])
+                #print("ar_decoder output kv_cache", kv_cache.shape) # torch.Size([12, 2, 1, 16, 1024, 64])
 
                 if offset == 0:
                     print("Export ar_decoder to onnx")
-                    from torch.autograd import Variable
                     self.ar_decoder.forward = self.ar_decoder.infer
                     torch.onnx.export(
                         self.ar_decoder,
@@ -612,7 +649,8 @@ class VALLE(VALLF):
                     xy_dec = output[0]
                 end = int(round(time.time() * 1000))
                 xy_dec = torch.from_numpy(xy_dec)
-                print(f'ailia processing time {end - start} ms')
+                if benchmark:
+                    print(f'ailia processing time {end - start} ms')
 
             offset = offset + xy_pos.shape[-2]
 

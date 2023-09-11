@@ -6,6 +6,9 @@ import logging
 import langid
 langid.set_languages(['en', 'zh', 'ja'])
 
+import ailia
+import time
+
 import pathlib
 import platform
 if platform.system().lower() == 'windows':
@@ -92,6 +95,11 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
     onnx_export = False
     onnx_import = False
 
+    onnx_export_vocos = True
+    onnx_import_vocos = True
+
+    benchmark = True
+
     global model, codec, vocos, text_tokenizer, text_collater
     text = text.replace("\n", "").strip(" ")
     # detect language
@@ -146,19 +154,68 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
         prompt_language=lang_pr,
         text_language=langs if accent == "no-accent" else lang,
         onnx_export=onnx_export,
-        onnx_import=onnx_import
+        onnx_import=onnx_import,
+        benchmark=benchmark
     )
     # Decode with Vocos
     frames = encoded_frames.permute(2,0,1)
     features = vocos.codes_to_features(frames)
     samples = vocos.decode(features, bandwidth_id=torch.tensor([2], device=device))
 
-    if onnx_export:
-        print("vocos.codes_to_features input", frames.shape)
-        print("vocos.codes_to_features output", features.shape)
+    if onnx_export_vocos:
+        print("vocos.codes_to_features input", frames.shape) # torch.Size([8, 1, 326])
+        print("vocos.codes_to_features output", features.shape) # torch.Size([1, 128, 326])
 
-        print("vocos.decode input", features.shape)
-        print("vocos.decode output", samples.shape)
+        print("vocos.decode input", features.shape) # torch.Size([1, 128, 326])
+        print("vocos.decode output", samples.shape) # torch.Size([1, 104320])
+
+        print("Export vocos to onnx")
+        vocos.forward = vocos.codes_to_features
+        torch.onnx.export(
+            vocos,
+            (frames),
+            "vocos_codes_to_features.onnx",
+            input_names=["frames"],
+            output_names=["features"],
+            dynamic_axes={
+                "frames": [2],
+                "features": [2]
+            },
+            verbose=False, opset_version=15
+        )           
+
+        # vocosのforwardを書き換えてbandwidth_idをOptionalではなくする必要がある
+
+        vocos.forward = vocos.decode
+        torch.onnx.export(
+            vocos,
+            (features, torch.tensor([2], device=device)),
+            "vocos_decode.onnx",
+            input_names=["features", "bandwidth_id"],
+            output_names=["samples"],
+            dynamic_axes={
+                "features": [2],
+                "samples": [1]
+            },
+            verbose=False, opset_version=15
+        )
+    if onnx_import_vocos:
+        print("Impot vocos from onnx")
+        vcnet = ailia.Net(weight="vocos_codes_to_features.onnx", env_id = 1, memory_mode = 11)
+        start = int(round(time.time() * 1000))
+        features = vcnet.run([frames.numpy()])
+        end = int(round(time.time() * 1000))
+        features = torch.from_numpy(features)
+        if benchmark:
+            print(f'ailia processing time {end - start} ms')
+
+        vnet = ailia.Net(weight="vocos_decode.onnx", env_id = 1, memory_mode = 11)
+        start = int(round(time.time() * 1000))
+        samples = vnet.run([features.numpy(), torch.tensor([2], device=device).numpy()])
+        end = int(round(time.time() * 1000))
+        samples = torch.from_numpy(samples)
+        if benchmark:
+            print(f'ailia processing time {end - start} ms')
 
     return samples.squeeze().cpu().numpy()
 
