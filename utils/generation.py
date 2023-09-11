@@ -89,7 +89,8 @@ def preload_models():
 
 @torch.no_grad()
 def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
-    onnx_export = True
+    onnx_export = False
+    onnx_import = False
 
     global model, codec, vocos, text_tokenizer, text_collater
     text = text.replace("\n", "").strip(" ")
@@ -144,7 +145,8 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
         temperature=1,
         prompt_language=lang_pr,
         text_language=langs if accent == "no-accent" else lang,
-        onnx_export=onnx_export
+        onnx_export=onnx_export,
+        onnx_import=onnx_import
     )
     # Decode with Vocos
     frames = encoded_frames.permute(2,0,1)

@@ -448,12 +448,11 @@ class TransformerEncoder(nn.Module):
         self,
         src: Tensor,
         mask: Optional[Tensor] = None,
-        src_key_padding_mask: Optional[Tensor] = None,
-        return_layer_states: bool = False,
         past_kv: Optional[Tensor] = None,
         offset = 0
     ):
         use_cache = True
+        src_key_padding_mask = None
         #if past_kv is None:
         #    past_length = 0
         #    past_kv = tuple([None] * self.num_layers)

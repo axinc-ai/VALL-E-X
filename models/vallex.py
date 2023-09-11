@@ -15,6 +15,9 @@
 import random
 from typing import Dict, Iterator, List, Tuple, Union
 
+import ailia
+import time
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -465,7 +468,8 @@ class VALLE(VALLF):
         temperature: float = 1.0,
         prompt_language: str = None,
         text_language: str = None,
-        onnx_export = False
+        onnx_export = False,
+        onnx_import = True
     ) -> torch.Tensor:
         """
         Args:
@@ -519,6 +523,7 @@ class VALLE(VALLF):
 
         max_len = 1024 # TBD
         kv_cache = torch.zeros((12, 2, 1, 16, max_len, 64))
+        kv_cache_numpy = np.zeros((12, 2, 1, 16, max_len, 64))
         offset = 0
         # torch.Size([1, 16, n, 64])が12レイヤー * 2ノード分ある
 
@@ -552,24 +557,64 @@ class VALLE(VALLF):
             else:
                 pass # initial prompt
 
-            xy_dec, kv_cache = self.ar_decoder.infer(
-                xy_pos,
-                mask=xy_attn_mask,
-                past_kv=kv_cache,
-                offset=offset
-            )
-            offset = offset + xy_pos.shape[-2]
+            if not onnx_import:
+                start = int(round(time.time() * 1000))
+                xy_dec, kv_cache = self.ar_decoder.infer(
+                    xy_pos,
+                    mask=xy_attn_mask,
+                    past_kv=kv_cache,
+                    offset=offset
+                )
+                end = int(round(time.time() * 1000))
+                print(f'torch processing time {end - start} ms')
 
             if onnx_export:
                 # kv_cacheの固定化が必要
-                print("ar_decoder input xy_pos", xy_pos.shape)
-                print("ar_decoder input mask", xy_attn_mask.shape)
-                #for l in range(len(kv_cache)): # layers
-                #    for n in range(len(kv_cache[l])):
-                #        print("ar_decoder input past_kv"+str(l)+"_"+str(n), kv_cache[l][n].shape)
-                print("ar_decoder input use_kv_caching", use_kv_caching)
-                print("ar_decoder output xy_dec", xy_dec.shape)
-                #print("ar_decoder output kv_cache", kv_cache.shape)
+                print("ar_decoder input xy_pos", xy_pos.shape) # torch.Size([1, 1, 1024])
+                print("ar_decoder input mask", xy_attn_mask.shape) # torch.Size([61, 61])
+                print("ar_decoder input kv_cache", kv_cache.shape) # torch.Size([12, 2, 1, 16, 1024, 64])
+                print("ar_decoder output xy_dec", xy_dec.shape) # torch.Size([1, 1, 1024])
+                print("ar_decoder output kv_cache", kv_cache.shape) # torch.Size([12, 2, 1, 16, 1024, 64])
+
+                if offset == 0:
+                    print("Export ar_decoder to onnx")
+                    from torch.autograd import Variable
+                    self.ar_decoder.forward = self.ar_decoder.infer
+                    torch.onnx.export(
+                        self.ar_decoder,
+                        (xy_pos, xy_attn_mask, kv_cache, offset),
+                        "ar_decoder.onnx",
+                        input_names=["xy_pos", "mask", "past_kv", "offset"],
+                        output_names=["xy_dec", "kv_cache"],
+                        dynamic_axes={
+                            "xy_pos": [1],
+                            "mask": [0, 1],
+                            "past_kv": [4],
+                            "xy_dec": [1],
+                            "kv_cache": [4],
+                        },
+                        verbose=False, opset_version=15
+                    )
+            
+            if onnx_import:
+                if offset == 0:
+                    print("Impot ar_decoder from onnx")
+                    net = ailia.Net(weight="ar_decoder.onnx", env_id = 1, memory_mode = 11)
+                offset_tensor = np.zeros((1))
+                offset_tensor[0] = offset
+                start = int(round(time.time() * 1000))
+                if True:#offset == 0:
+                    xy_dec, kv_cache_numpy = net.run([xy_pos.numpy(), xy_attn_mask.numpy(), kv_cache_numpy, offset_tensor])
+                else:
+                    net.copy_blob_data("past_kv", "kv_cache", None)
+                    output = [xy_dec.numpy()]
+                    net.run({"xy_pos":xy_pos.numpy(), "mask":xy_attn_mask.numpy(), "offset":offset_tensor}, output = output)
+                    xy_dec = output[0]
+                end = int(round(time.time() * 1000))
+                xy_dec = torch.from_numpy(xy_dec)
+                print(f'ailia processing time {end - start} ms')
+
+            offset = offset + xy_pos.shape[-2]
 
             logits = self.ar_predict_layer(xy_dec[:, -1])
             samples = topk_sampling(
