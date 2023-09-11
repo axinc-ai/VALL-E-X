@@ -125,8 +125,8 @@ def export_vocos(frames):
 
 @torch.no_grad()
 def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
-    onnx_export = False
-    onnx_import = False
+    onnx_export = True
+    onnx_import = True
 
     onnx_export_vocos = False
     onnx_import_vocos = False

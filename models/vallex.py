@@ -465,6 +465,16 @@ class VALLE(VALLF):
         y_pos = self.ar_audio_position(y_emb)
         return y_pos
 
+    def export_decoder(self, xy_pos, xy_attn_mask, kv_cache, offset):
+        xy_dec, kv_cache = self.ar_decoder.infer(
+            xy_pos,
+            mask=xy_attn_mask,
+            past_kv=kv_cache,
+            offset=offset
+        )
+        logits = self.ar_predict_layer(xy_dec[:, -1])
+        return logits, kv_cache
+
     def inference(
         self,
         x: torch.Tensor,
@@ -563,7 +573,7 @@ class VALLE(VALLF):
                 if offset == 0:
                     print("Impot audio_embedding from onnx")
                     anet = ailia.Net(weight="audio_embedding.onnx", env_id = 1, memory_mode = 11)
-                y_pos = anet.run([y.numpy()])
+                y_pos = anet.run([y.numpy()])[0]
                 end = int(round(time.time() * 1000))
                 y_pos = torch.from_numpy(y_pos)
                 if benchmark:
@@ -602,6 +612,7 @@ class VALLE(VALLF):
                     past_kv=kv_cache,
                     offset=offset
                 )
+                logits = self.ar_predict_layer(xy_dec[:, -1])
                 end = int(round(time.time() * 1000))
                 if benchmark:
                     print(f'torch processing time {end - start} ms')
@@ -616,18 +627,18 @@ class VALLE(VALLF):
 
                 if offset == 0:
                     print("Export ar_decoder to onnx")
-                    self.ar_decoder.forward = self.ar_decoder.infer
+                    self.forward = self.export_decoder
                     torch.onnx.export(
-                        self.ar_decoder,
+                        self,
                         (xy_pos, xy_attn_mask, kv_cache, offset),
                         "ar_decoder.onnx",
                         input_names=["xy_pos", "mask", "past_kv", "offset"],
-                        output_names=["xy_dec", "kv_cache"],
+                        output_names=["logits", "kv_cache"],
                         dynamic_axes={
                             "xy_pos": [1],
                             "mask": [0, 1],
                             "past_kv": [4],
-                            "xy_dec": [1],
+                            "logits": [1],
                             "kv_cache": [4],
                         },
                         verbose=False, opset_version=15
@@ -640,21 +651,14 @@ class VALLE(VALLF):
                 offset_tensor = np.zeros((1))
                 offset_tensor[0] = offset
                 start = int(round(time.time() * 1000))
-                if True:#offset == 0:
-                    xy_dec, kv_cache_numpy = net.run([xy_pos.numpy(), xy_attn_mask.numpy(), kv_cache_numpy, offset_tensor])
-                else:
-                    net.copy_blob_data("past_kv", "kv_cache", None)
-                    output = [xy_dec.numpy()]
-                    net.run({"xy_pos":xy_pos.numpy(), "mask":xy_attn_mask.numpy(), "offset":offset_tensor}, output = output)
-                    xy_dec = output[0]
+                logits, kv_cache_numpy = net.run([xy_pos.numpy(), xy_attn_mask.numpy(), kv_cache_numpy, offset_tensor])
                 end = int(round(time.time() * 1000))
-                xy_dec = torch.from_numpy(xy_dec)
+                logits = torch.from_numpy(logits)
                 if benchmark:
                     print(f'ailia processing time {end - start} ms')
 
             offset = offset + xy_pos.shape[-2]
 
-            logits = self.ar_predict_layer(xy_dec[:, -1])
             samples = topk_sampling(
                 logits, top_k=top_k, top_p=1, temperature=temperature
             )
