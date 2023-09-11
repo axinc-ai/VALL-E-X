@@ -2,7 +2,8 @@
 from utils.prompt_making import make_prompt
 model_name="jsut"
 #make_prompt(name=model_name, audio_prompt_path="VOICEACTRESS100_001.wav")
-make_prompt(name=model_name, audio_prompt_path="BASIC5000_0001.wav")
+#make_prompt(name=model_name, audio_prompt_path="BASIC5000_0001.wav")
+make_prompt(name=model_name, audio_prompt_path="BASIC5000_0001.wav", transcript="水をマレーシアから買わなくてはならないのです") # Disable whisper
 #make_prompt(name=model_name, audio_prompt_path="kyakuno.wav")
 
 # generate audio

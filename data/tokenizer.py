@@ -17,6 +17,7 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Pattern, Union
 
+import ailia
 import numpy as np
 import torch
 import torchaudio
@@ -234,7 +235,38 @@ class AudioTokenizer:
         return self._device
 
     def encode(self, wav: torch.Tensor) -> torch.Tensor:
-        return self.codec.encode(wav.to(self.device))
+        onnx_export = True
+        onnx_import = True
+
+        encoded_frames = self.codec.encode(wav.to(self.device))
+
+        if onnx_export:
+            print("audio tokenizer", wav.shape) # torch.Size([1, 1, 76561])
+            print("audio tokenizer", encoded_frames[0][0].shape) # torch.Size([1, 8, 240])
+
+            print("Export encodec to onnx")
+            self.codec.forward = self.codec.encode
+            torch.onnx.export(
+                self.codec,
+                (wav),
+                "encodec.onnx",
+                input_names=["wav"],
+                output_names=["encoded_frames"],
+                dynamic_axes={
+                    "wav": [2],
+                    "encoded_frames": [2]
+                },
+                verbose=False, opset_version=15
+            )
+        
+        if onnx_import:
+            print("Impot encodec from onnx")
+            vnet = ailia.Net(weight="encodec.onnx", env_id = 1, memory_mode = 11)
+            encoded_frames = vnet.run([wav.numpy()])[0]
+            encoded_frames = torch.from_numpy(encoded_frames)
+            encoded_frames = [[encoded_frames]]
+
+        return encoded_frames
 
     def decode(self, frames: torch.Tensor) -> torch.Tensor:
         return self.codec.decode(frames)
@@ -252,6 +284,7 @@ def tokenize_audio(tokenizer: AudioTokenizer, audio):
     # Extract discrete codes from EnCodec
     with torch.no_grad():
         encoded_frames = tokenizer.encode(wav)
+
     return encoded_frames
 
 

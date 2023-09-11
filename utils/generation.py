@@ -128,10 +128,10 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
     onnx_export = False
     onnx_import = False
 
-    onnx_export_vocos = True
-    onnx_import_vocos = True
+    onnx_export_vocos = False
+    onnx_import_vocos = False
 
-    benchmark = True
+    benchmark = False
 
     global model, codec, vocos, text_tokenizer, text_collater
     text = text.replace("\n", "").strip(" ")
