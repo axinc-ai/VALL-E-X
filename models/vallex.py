@@ -475,6 +475,19 @@ class VALLE(VALLF):
         logits = self.ar_predict_layer(xy_dec[:, -1])
         return logits, kv_cache
 
+    def export_nar_decoder(self, xy_pos, i):
+        weights = torch.zeros((7, 1, 1024))
+        for j in range(7):
+            weights[j, :, :] = self.nar_stage_embeddings[j].weight # (1, 1024)
+        weight = weights[i]
+        xy_dec, _ = self.nar_decoder(
+            (xy_pos, weight)
+        )
+        return xy_dec
+
+    def export_predict_layer(self, xy_pos):
+        return self.predict_layer(xy_pos)
+
     def inference(
         self,
         x: torch.Tensor,
@@ -486,7 +499,7 @@ class VALLE(VALLF):
         prompt_language: str = None,
         text_language: str = None,
         onnx_export = False,
-        onnx_import = True,
+        onnx_import = False,
         benchmark = False
     ) -> torch.Tensor:
         """
@@ -719,6 +732,8 @@ class VALLE(VALLF):
                     self.nar_audio_embeddings[1:],
                 )
             ):
+                print("prefix_mode==0 ", i)
+
                 y_pos = self.nar_audio_prenet(y_emb)
                 y_pos = self.nar_audio_position(y_pos)
                 xy_pos = torch.concat([x, y_pos], dim=1)
@@ -748,14 +763,76 @@ class VALLE(VALLF):
                     self.nar_audio_embeddings[1:],
                 )
             ):
+                print("prefix_mode!=0 ", i)
+
                 y_pos = self.nar_audio_prenet(y_emb)
                 y_pos = self.nar_audio_position(y_pos)
                 xy_pos = torch.concat([x, y_pos], dim=1)
 
-                xy_dec, _ = self.nar_decoder(
-                    (xy_pos, self.nar_stage_embeddings[i].weight)
-                )
-                logits = predict_layer(xy_dec[:, text_len + prefix_len :])
+                if not onnx_import or onnx_export:
+                    xy_dec, _ = self.nar_decoder(
+                        (xy_pos, self.nar_stage_embeddings[i].weight)
+                    )
+                    logits = predict_layer(xy_dec[:, text_len + prefix_len :])
+
+                if onnx_export:
+                    if i == 0:
+                        print("Export nar_decoder to onnx")
+                        print("xy_pos.shape",xy_pos.shape)
+                        print("self.nar_weights.shape",self.nar_stage_embeddings[i].weight.shape)
+                        self.forward = self.export_nar_decoder
+                        iv = torch.tensor([i], dtype=torch.int64)
+                        from torch.autograd import Variable
+                        iv = Variable(iv)
+                        torch.onnx.export(
+                            self,
+                            (xy_pos, iv),
+                            "nar_decoder.onnx",
+                            input_names=["xy_pos", "i"],
+                            output_names=["xy_dec"],
+                            dynamic_axes={
+                                "xy_pos": [1],
+                                "xy_dec": [1]
+                            },
+                            verbose=False, opset_version=15
+                        )
+
+                    print("Export nar_predict_layer_"+str(i)+" to onnx")
+                    self.predict_layer = predict_layer
+                    self.forward = self.export_predict_layer
+                    print("xy_dec.shape",xy_dec.shape)
+                    torch.onnx.export(
+                        self,
+                        (xy_dec[:, text_len + prefix_len :]),
+                        "nar_predict_layer_"+str(i)+".onnx",
+                        input_names=["xy_pos"],
+                        output_names=["logits"],
+                        dynamic_axes={
+                            "xy_dec": [1],
+                            "logits": [1]
+                        },
+                        verbose=False, opset_version=15
+                    )           
+                if onnx_import:
+                    print("Impot nar_decoder from onnx")
+                    if i == 0:
+                        nar_decoder = ailia.Net(weight="nar_decoder.onnx", env_id = 1, memory_mode = 11)
+                    offset_tensor = np.zeros((1))
+                    offset_tensor[0] = i
+                    print(xy_pos.shape, offset_tensor.shape)
+                    xy_dec = nar_decoder.run([xy_pos.numpy(), offset_tensor])[0]
+                    end = int(round(time.time() * 1000))
+                    xy_dec = torch.from_numpy(xy_dec)
+                    if benchmark:
+                        print(f'ailia processing time {end - start} ms')
+
+                    print("Impot nar_predict_layer_"+str(i)+" from onnx")
+                    nar_predict = ailia.Net(weight="nar_predict_layer_"+str(i)+".onnx", env_id = 1, memory_mode = 11)
+                    logits = nar_predict.run([xy_dec[:, text_len + prefix_len :].numpy()])[0]
+                    end = int(round(time.time() * 1000))
+                    logits = torch.from_numpy(logits)
+                    if benchmark:
+                        print(f'ailia processing time {end - start} ms')
 
                 samples = torch.argmax(logits, dim=-1)
                 codes.append(samples)
