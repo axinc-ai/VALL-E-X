@@ -463,7 +463,7 @@ class TransformerEncoder(nn.Module):
         output = src
         layer_idx = 0
         for mod in self.layers: # 12 layers
-            past_layer_kv = [past_kv[layer_idx,0,:,:,0:offset,:], past_kv[layer_idx,1,:,:,0:offset,:]]
+            past_layer_kv = [past_kv[layer_idx,0,:,:,0:offset,:].to(src.device), past_kv[layer_idx,1,:,:,0:offset,:].to(src.device)]
             output, kv = mod.infer(
                 output, src_mask=mask, src_key_padding_mask=src_key_padding_mask, past_kv=past_layer_kv, use_cache=use_cache
             )

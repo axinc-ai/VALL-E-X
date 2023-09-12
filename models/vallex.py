@@ -126,7 +126,7 @@ class VALLF(nn.Module):
                 nn.Linear(256, d_model),
             )
         else:
-            print("ar is identity")
+            #print("ar is identity")
             self.ar_text_prenet = nn.Identity()
             self.ar_audio_prenet = nn.Identity()
 
@@ -209,7 +209,7 @@ class VALLF(nn.Module):
                     nn.Linear(256, nar_d_model),
                 )
             else:
-                print("nar is identity")
+                #print("nar is identity")
                 self.nar_text_prenet = nn.Identity()
                 self.nar_audio_prenet = nn.Identity()
 
@@ -738,7 +738,7 @@ class VALLE(VALLF):
                     self.nar_audio_embeddings[1:],
                 )
             ):
-                print("prefix_mode==0 ", i)
+                #print("prefix_mode==0 ", i)
 
                 y_pos = self.nar_audio_prenet(y_emb)
                 y_pos = self.nar_audio_position(y_pos)
@@ -769,7 +769,7 @@ class VALLE(VALLF):
                     self.nar_audio_embeddings[1:],
                 )
             ):
-                print("prefix_mode!=0 ", i)
+                #print("prefix_mode!=0 ", i)
 
                 y_pos = self.nar_audio_prenet(y_emb)
                 y_pos = self.nar_audio_position(y_pos)
