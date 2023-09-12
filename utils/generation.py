@@ -126,12 +126,12 @@ def export_vocos(frames):
 @torch.no_grad()
 def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
     onnx_export = False
-    onnx_import = True
+    onnx_import = False
 
     onnx_export_vocos = False
-    onnx_import_vocos = True
+    onnx_import_vocos = False
 
-    benchmark = True
+    benchmark = False
 
     global model, codec, vocos, text_tokenizer, text_collater
     text = text.replace("\n", "").strip(" ")
@@ -229,7 +229,7 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
             verbose=False, opset_version=15
         )           
 
-    if True:#onnx_import_vocos:
+    if onnx_import_vocos:
         print("Impot vocos from onnx")
         vnet = ailia.Net(weight="vocos.onnx", env_id = 1, memory_mode = 11)
         start = int(round(time.time() * 1000))

@@ -234,11 +234,9 @@ class AudioTokenizer:
     def device(self):
         return self._device
 
-    def encode(self, wav: torch.Tensor) -> torch.Tensor:
-        onnx_export = True
-        onnx_import = True
-
-        encoded_frames = self.codec.encode(wav.to(self.device))
+    def encode(self, wav: torch.Tensor, onnx_export = False, onnx_import = False) -> torch.Tensor:
+        if not onnx_import and not onnx_export:
+            encoded_frames = self.codec.encode(wav.to(self.device))
 
         if onnx_export:
             print("audio tokenizer", wav.shape) # torch.Size([1, 1, 76561])
