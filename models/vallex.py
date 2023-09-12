@@ -126,6 +126,7 @@ class VALLF(nn.Module):
                 nn.Linear(256, d_model),
             )
         else:
+            print("ar is identity")
             self.ar_text_prenet = nn.Identity()
             self.ar_audio_prenet = nn.Identity()
 
@@ -208,6 +209,7 @@ class VALLF(nn.Module):
                     nn.Linear(256, nar_d_model),
                 )
             else:
+                print("nar is identity")
                 self.nar_text_prenet = nn.Identity()
                 self.nar_audio_prenet = nn.Identity()
 
@@ -589,6 +591,7 @@ class VALLE(VALLF):
                 if offset == 0:
                     print("Impot audio_embedding from onnx")
                     anet = ailia.Net(weight="audio_embedding.onnx", env_id = 1, memory_mode = 11)
+                start = int(round(time.time() * 1000))
                 y_pos = anet.run([y.numpy()])[0]
                 end = int(round(time.time() * 1000))
                 y_pos = torch.from_numpy(y_pos)
