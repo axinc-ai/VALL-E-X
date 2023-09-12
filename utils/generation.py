@@ -66,6 +66,9 @@ def preload_models():
                 "\n Model weights download failed, please go to 'https://huggingface.co/Plachta/VALL-E-X/resolve/main/vallex-checkpoint.pt'"
                 "\n manually download model weights and put it to {} .".format(os.getcwd() + "\checkpoints"))
     # VALL-E
+    print("N_DIM", N_DIM)
+    print("PREFIX_MODE", PREFIX_MODE)
+    print("NUM_QUANTIZERS", NUM_QUANTIZERS)
     model = VALLE(
         N_DIM,
         NUM_HEAD,
@@ -111,7 +114,7 @@ def export_vocos_istft(x, y): # for onnx
     n_fft = vocos.head.istft.n_fft # 1280
     hop_length = vocos.head.istft.hop_length # 320
     win_length = vocos.head.istft.win_length # 1280
-    window = vocos.head.istft.window
+    window = torch.hann_window(win_length)
     print("istft settings", n_fft, hop_length, win_length, window)
     audio = torch.istft(S, n_fft, hop_length, win_length, window, center=True)
     return audio
@@ -126,10 +129,10 @@ def export_vocos(frames):
 @torch.no_grad()
 def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
     onnx_export = False
-    onnx_import = False
+    onnx_import = True
 
     onnx_export_vocos = False
-    onnx_import_vocos = False
+    onnx_import_vocos = True
 
     benchmark = False
 
@@ -193,53 +196,16 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
     # Decode with Vocos
     frames = encoded_frames.permute(2,0,1)
 
-    if not onnx_import_vocos or onnx_export_vocos:
-        features = vocos.codes_to_features(frames)
-    
-        # original
-        #samples = vocos.decode(features, bandwidth_id=torch.tensor([2], device=device))
-
-        # divide head
-        x = vocos.backbone(features, bandwidth_id=torch.tensor([2], device=device))
-        samples = vocos.head(x) # isftf
-
-    if onnx_export_vocos:
-        #print("vocos.codes_to_features input", frames.shape) # torch.Size([8, 1, 350])
-        #print("vocos.codes_to_features output", features.shape) # torch.Size([1, 128, 350])
-
-        #print("vocos.backbone input", features.shape) # torch.Size([1, 128, 350])
-        #print("vocos.backbone output", x.shape) # torch.Size([1, 350, 384])
-
-        #print("vocos.head input", x.shape) # torch.Size([1, 350, 384])
-        #print("vocos.head output", samples.shape) # torch.Size([1, 112000])
-
-        print("Export vocos to onnx")
-        vocos.forward = export_vocos
-        torch.onnx.export(
-            vocos,
-            (frames),
-            "vocos.onnx",
-            input_names=["frames"],
-            output_names=["x", "y"],
-            dynamic_axes={
-                "frames": [2],
-                "x": [2],
-                "y": [2],
-            },
-            verbose=False, opset_version=15
-        )           
-
-    if onnx_import_vocos:
-        print("Impot vocos from onnx")
-        vnet = ailia.Net(weight="vocos.onnx", env_id = 1, memory_mode = 11)
-        start = int(round(time.time() * 1000))
-        x, y = vnet.run([frames.numpy()])
-        end = int(round(time.time() * 1000))
-        x = torch.from_numpy(x)
-        y = torch.from_numpy(y)
-        if benchmark:
-            print(f'ailia processing time {end - start} ms')
-        samples = export_vocos_istft(x, y)
+    print("Impot vocos from onnx")
+    vnet = ailia.Net(weight="vocos.onnx", env_id = 1, memory_mode = 11)
+    start = int(round(time.time() * 1000))
+    x, y = vnet.run([frames.numpy()])
+    end = int(round(time.time() * 1000))
+    x = torch.from_numpy(x)
+    y = torch.from_numpy(y)
+    if benchmark:
+        print(f'ailia processing time {end - start} ms')
+    samples = export_vocos_istft(x, y)
 
     return samples.squeeze().cpu().numpy()
 
