@@ -778,8 +778,11 @@ class VALLE(VALLF):
                     )
                     logits = predict_layer(xy_dec[:, text_len + prefix_len :])
 
-                if True:#onnx_export:
+                if onnx_export:
                     if i == 0:
+                        # site-packages/torch/nn/functional.py:5346:0のviewを書き換えないとreshapeのshapeが固定されてしまう
+                        # https://github.com/axinc-ai/ailia-models/issues/1236
+
                         print("Export nar_decoder to onnx")
                         print("xy_pos.shape",xy_pos.shape)
                         print("self.nar_weights.shape",self.nar_stage_embeddings[i].weight.shape)
@@ -815,15 +818,15 @@ class VALLE(VALLF):
                             },
                             verbose=False, opset_version=15
                         )           
-                if True:#onnx_import:
+                if onnx_import:
                     print("Impot nar_decoder from onnx")
                     if i == 0:
                         nar_decoder = ailia.Net(weight="nar_decoder.onnx", env_id = 1, memory_mode = 11)
                     offset_tensor = np.zeros((1))
                     offset_tensor[0] = i
                     print(xy_pos.shape, offset_tensor.shape)
-                    #xy_dec = nar_decoder.run([xy_pos.numpy(), offset_tensor])[0] # Normal inference
-                    xy_dec = nar_decoder.run([xy_pos.numpy()[:, 0:-1, :], offset_tensor])[0] # Test trim
+                    xy_dec = nar_decoder.run([xy_pos.numpy(), offset_tensor])[0] # Normal inference
+                    #xy_dec = nar_decoder.run([xy_pos.numpy()[:, 0:-1, :], offset_tensor])[0] # Test trim
                     end = int(round(time.time() * 1000))
                     xy_dec = torch.from_numpy(xy_dec)
                     if benchmark:
