@@ -499,6 +499,8 @@ class VALLE(VALLF):
         self.ar_audio_embedding.export_to_onnx("ar_audio_embedding.onnx")
         for i in range(len(self.nar_audio_embeddings)):
             self.nar_audio_embeddings[i].export_to_onnx("nar_audio_embeddings_"+str(i)+".onnx")
+        self.ar_language_embedding.export_to_onnx("ar_language_embedding.onnx")
+        self.nar_language_embedding.export_to_onnx("nar_language_embedding.onnx")
 
     def inference(
         self,

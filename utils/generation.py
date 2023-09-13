@@ -84,7 +84,7 @@ def preload_models():
     )
     assert not missing_keys
     model.eval()
-    export_onnx = False
+    export_onnx = True
     if export_onnx:
         model.export_token_embedding()
 
