@@ -84,6 +84,9 @@ def preload_models():
     )
     assert not missing_keys
     model.eval()
+    export_onnx = False
+    if export_onnx:
+        model.export_token_embedding()
 
     # Encodec
     codec = AudioTokenizer(device)

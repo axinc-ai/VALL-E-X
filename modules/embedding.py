@@ -17,6 +17,7 @@ import math
 import torch
 import torch.nn as nn
 
+import ailia
 
 class TokenEmbedding(nn.Module):
     def __init__(
@@ -33,6 +34,9 @@ class TokenEmbedding(nn.Module):
         self.dropout = torch.nn.Dropout(p=dropout)
         self.word_embeddings = nn.Embedding(self.vocab_size, self.dim_model)
 
+        self.onnx_mode = False
+        self.onnx_path = False
+
     @property
     def weight(self) -> torch.Tensor:
         return self.word_embeddings.weight
@@ -41,10 +45,36 @@ class TokenEmbedding(nn.Module):
         return self.word_embeddings.weight[index : index + 1]
 
     def forward(self, x: torch.Tensor):
+        if self.onnx_mode:
+            return self.forward_onnx(x)
         X = self.word_embeddings(x)
         X = self.dropout(X)
-
         return X
+
+    def export_to_onnx(self, path):
+        print("Export token embeddings to "+path)
+        x = torch.zeros((1, self.dim_model), dtype=torch.int64)
+        torch.onnx.export(
+            self,
+            (x),
+            path,
+            input_names=["x"],
+            output_names=["y"],
+            dynamic_axes={
+                "x": [1],
+                "y": [1]
+            },
+            verbose=False, opset_version=15
+        )
+        self.onnx_mode = True
+        self.onnx_path = path
+    
+    def forward_onnx(self, x: torch.Tensor):
+        print("Import token embeddings from "+self.onnx_path)
+        anet = ailia.Net(weight=self.onnx_path, env_id = 1, memory_mode = 11)
+        y = anet.run([x.numpy()])[0]
+        y = torch.from_numpy(y)
+        return y
 
 
 class SinePositionalEmbedding(nn.Module):

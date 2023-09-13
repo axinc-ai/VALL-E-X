@@ -493,6 +493,13 @@ class VALLE(VALLF):
             results[j, :, :, :] = self.nar_predict_layers[j](xy_pos)
         return results[i].reshape((xy_pos.shape[0], xy_pos.shape[1], xy_pos.shape[2]))
 
+    def export_token_embedding(self):
+        self.ar_text_embedding.export_to_onnx("ar_text_embedding.onnx")
+        self.nar_text_embedding.export_to_onnx("nar_text_embedding.onnx")
+        self.ar_audio_embedding.export_to_onnx("ar_audio_embedding.onnx")
+        for i in range(len(self.nar_audio_embeddings)):
+            self.nar_audio_embeddings[i].export_to_onnx("nar_audio_embeddings_"+str(i)+".onnx")
+
     def inference(
         self,
         x: torch.Tensor,
