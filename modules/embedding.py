@@ -70,7 +70,7 @@ class TokenEmbedding(nn.Module):
         self.onnx_path = path
     
     def forward_onnx(self, x: torch.Tensor):
-        print("Import token embeddings from "+self.onnx_path)
+        #print("Import token embeddings from "+self.onnx_path)
         anet = ailia.Net(weight=self.onnx_path, env_id = 1, memory_mode = 11)
         y = anet.run([x.numpy()])[0]
         y = torch.from_numpy(y)
@@ -125,3 +125,6 @@ class SinePositionalEmbedding(nn.Module):
         output = x.unsqueeze(-1) if x.ndim == 2 else x
         output = output * self.x_scale + self.alpha * self.pe[:, : x.size(1)]
         return self.dropout(output)
+
+    def export_alpha(self, path):
+        print(path, "Alpha", self.alpha)
