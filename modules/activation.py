@@ -151,10 +151,12 @@ def multi_head_attention_forward(
         size = x.shape[1]
         key_id = layer_id * 2
         value_id = key_id + 1
-        past_kv[key_id,:,:,offset:offset+size,:] = k
-        past_kv[value_id,:,:,offset:offset+size,:] = v
-        k = past_kv[key_id,:,:,0:offset+size,:]
-        v = past_kv[value_id,:,:,0:offset+size,:]
+        past_kv[key_id,:,offset:offset+size,:] = k[0]
+        past_kv[value_id,:,offset:offset+size,:] = v[0]
+        k = past_kv[key_id,:,0:offset+size,:]
+        v = past_kv[value_id,:,0:offset+size,:]
+        k = torch.unsqueeze(k, 0)
+        v = torch.unsqueeze(v, 0)
 
     FULL_T = k.shape[-2]
 
