@@ -637,7 +637,7 @@ class VALLE(VALLF):
             else:
                 pass # initial prompt
 
-            if True:#not onnx_import:
+            if not onnx_import:
                 start = int(round(time.time() * 1000))
                 xy_dec, kv_cache = self.ar_decoder.infer(
                     xy_pos,
@@ -650,7 +650,7 @@ class VALLE(VALLF):
                 if benchmark:
                     print(f'torch processing time {end - start} ms')
 
-            if True:
+            if onnx_export:
                 # kv_cacheの固定化が必要
                 #print("ar_decoder input xy_pos", xy_pos.shape) # torch.Size([1, 1, 1024])
                 #print("ar_decoder input mask", xy_attn_mask.shape) # torch.Size([61, 61])
@@ -677,7 +677,7 @@ class VALLE(VALLF):
                         verbose=False, opset_version=15
                     )
             
-            if True:
+            if onnx_import:
                 if offset == 0:
                     print("Impot ar_decoder from onnx")
                     net = ailia.Net(weight="ar_decoder.onnx", env_id = 1, memory_mode = 11)
