@@ -572,8 +572,8 @@ class VALLE(VALLF):
         x_attn_mask = torch.zeros((x_len, x_len), dtype=torch.bool)
 
         max_len = 1024 # TBD
-        kv_cache = torch.zeros((12, 2, 1, 16, max_len, 64))
-        kv_cache_numpy = np.zeros((12, 2, 1, 16, max_len, 64))
+        kv_cache = torch.zeros((12 * 2, 1, 16, max_len, 64))
+        kv_cache_numpy = np.zeros((12 * 2, 1, 16, max_len, 64), dtype=np.float32)
         offset = 0
         # torch.Size([1, 16, n, 64])が12レイヤー * 2ノード分ある
 
@@ -637,20 +637,20 @@ class VALLE(VALLF):
             else:
                 pass # initial prompt
 
-            if not onnx_import:
+            if True:#not onnx_import:
                 start = int(round(time.time() * 1000))
                 xy_dec, kv_cache = self.ar_decoder.infer(
                     xy_pos,
                     mask=xy_attn_mask,
                     past_kv=kv_cache,
-                    offset=offset
+                    offset=torch.tensor(offset)
                 )
                 logits = self.ar_predict_layer(xy_dec[:, -1])
                 end = int(round(time.time() * 1000))
                 if benchmark:
                     print(f'torch processing time {end - start} ms')
 
-            if onnx_export:
+            if True:
                 # kv_cacheの固定化が必要
                 #print("ar_decoder input xy_pos", xy_pos.shape) # torch.Size([1, 1, 1024])
                 #print("ar_decoder input mask", xy_attn_mask.shape) # torch.Size([61, 61])
@@ -670,24 +670,34 @@ class VALLE(VALLF):
                         dynamic_axes={
                             "xy_pos": [1],
                             "mask": [0, 1],
-                            "past_kv": [4],
-                            "logits": [1],
-                            "kv_cache": [4],
+                            "past_kv": [3],
+                            # logits is fixed shape
+                            "kv_cache": [3],
                         },
                         verbose=False, opset_version=15
                     )
             
-            if onnx_import:
+            if True:
                 if offset == 0:
                     print("Impot ar_decoder from onnx")
                     net = ailia.Net(weight="ar_decoder.onnx", env_id = 1, memory_mode = 11)
-                offset_tensor = np.zeros((1))
-                offset_tensor[0] = offset
+                    #import onnxruntime
+                    #net = onnxruntime.InferenceSession("ar_decoder.onnx")
+                offset_tensor = np.array(offset, dtype=np.int64) # constant type (shape = ())
                 start = int(round(time.time() * 1000))
-                logits, kv_cache_numpy = net.run([xy_pos.numpy(), xy_attn_mask.numpy(), kv_cache_numpy, offset_tensor])
+                #print(offset)
+                if offset == 0:
+                    logits, kv_cache_numpy = net.run({"xy_pos":xy_pos.numpy(), "mask":xy_attn_mask.numpy(), "past_kv":kv_cache_numpy, "offset":offset_tensor})
+                    #logits, kv_cache_numpy = net.run(None, {"xy_pos":xy_pos.numpy().astype(np.float32), "mask":xy_attn_mask.numpy().astype(np.bool), "past_kv":kv_cache_numpy, "offset":offset_tensor})
+                else:
+                    logits = np.zeros((1, 1025), dtype=np.float32, order='C')
+                    output = [logits]
+                    net.copy_blob_data(net.find_blob_index_by_name("past_kv"), net.find_blob_index_by_name("kv_cache"), None)
+                    net.run({"xy_pos":xy_pos.numpy(), "mask":xy_attn_mask.numpy(), "offset":offset_tensor}, output = output)
+                    
                 end = int(round(time.time() * 1000))
                 logits = torch.from_numpy(logits)
-                if benchmark:
+                if True:
                     print(f'ailia processing time {end - start} ms')
 
             offset = offset + xy_pos.shape[-2]

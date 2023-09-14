@@ -266,7 +266,7 @@ class TransformerEncoderLayer(nn.Module):
         self,
         src: Tensor,
         src_mask: Optional[Tensor] = None,
-        src_key_padding_mask: Optional[Tensor] = None,
+        src_key_padding_mask: Optional[Tensor] = None
     ) -> Tensor:
         r"""Pass the input through the encoder layer.
 
@@ -318,6 +318,8 @@ class TransformerEncoderLayer(nn.Module):
         src_key_padding_mask: Optional[Tensor] = None,
         past_kv: Optional[Tensor] = None,
         use_cache: bool = False,
+        layer_id = 0,
+        offset = 0
     ):
         x, stage_embedding = src, None
         is_src_tuple = False
@@ -335,20 +337,22 @@ class TransformerEncoderLayer(nn.Module):
                 )
 
         if self.norm_first:
-            x_attn_out, kv = self.self_attn.infer(
+            x_attn_out = self.self_attn.infer(
                 self.norm1(x, stage_embedding),
                 attn_mask=src_mask,
                 key_padding_mask=src_key_padding_mask,
                 need_weights=False,
                 past_kv=past_kv,
                 use_cache=use_cache,
+                layer_id=layer_id,
+                offset=offset
             )
             x = x + x_attn_out
             x = x + self._ff_block(self.norm2(x, stage_embedding))
 
         if is_src_tuple:
             return (x, stage_embedding)
-        return (x, kv)
+        return x
 
     # self-attention block
     def _sa_block(
@@ -459,28 +463,28 @@ class TransformerEncoder(nn.Module):
         #else:
         #    #past_length = past_kv[0][0].size(-2)
         #    past_length = offset
-        new_kv = torch.zeros(past_kv.shape)#() if use_cache else None
+        #new_kv = torch.zeros(past_kv.shape)#() if use_cache else None
         output = src
-        layer_idx = 0
+        layer_id = 0
         for mod in self.layers: # 12 layers
-            past_layer_kv = [past_kv[layer_idx,0,:,:,0:offset,:].to(src.device), past_kv[layer_idx,1,:,:,0:offset,:].to(src.device)]
-            output, kv = mod.infer(
-                output, src_mask=mask, src_key_padding_mask=src_key_padding_mask, past_kv=past_layer_kv, use_cache=use_cache
+            #past_layer_kv = past_kv[layer_idx]#[past_kv[layer_idx,0,:,:,0:offset,:].to(src.device), past_kv[layer_idx,1,:,:,0:offset,:].to(src.device)]
+            output = mod.infer(
+                output, src_mask=mask, src_key_padding_mask=src_key_padding_mask, past_kv=past_kv, use_cache=use_cache, layer_id=layer_id, offset=offset
             )
-            if use_cache:
+            #if use_cache:
                 #print(new_kv.shape)
                 #print(kv[0].shape)
                 #print(kv[1].shape)
-                len = kv[0].shape[-2] - offset # initial promptは長い
+                #len = src.shape[1] # initial promptは長い
                 #print(len)
-                new_kv[layer_idx,0,:,:,0:offset+len,:] = kv[0]
-                new_kv[layer_idx,1,:,:,0:offset+len,:] = kv[1]
-            layer_idx = layer_idx + 1
+                #past_kv[layer_idx,0,:,:,offset:offset+len,:] = kv[0][:,:,0:len,:]
+                #past_kv[layer_idx,1,:,:,offset:offset+len,:] = kv[1][:,:,0:len,:]
+            layer_id = layer_id + 1
 
         if self.norm is not None:
             output = self.norm(output)
 
-        return output, new_kv
+        return output, past_kv
 
 
 class TransformerDecoderLayer(nn.Module):

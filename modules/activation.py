@@ -121,6 +121,8 @@ def multi_head_attention_forward(
         attn_mask,
         past_kv=None,
         use_cache=False,
+        layer_id=0,
+        offset=0
 ):
     # x = x.transpose(1, 0)
     # tgt_len, bsz, embed_dim = x.shape
@@ -146,17 +148,15 @@ def multi_head_attention_forward(
     q = q.view(B, T, n_head, C // n_head).transpose(1, 2)  # (B, nh, T, hs)
     v = v.view(B, T, n_head, C // n_head).transpose(1, 2)  # (B, nh, T, hs)
     if past_kv is not None:
-        past_key = past_kv[0]
-        past_value = past_kv[1]
-        k = torch.cat((past_key, k), dim=-2)
-        v = torch.cat((past_value, v), dim=-2)
+        size = x.shape[1]
+        key_id = layer_id * 2
+        value_id = key_id + 1
+        past_kv[key_id,:,:,offset:offset+size,:] = k
+        past_kv[value_id,:,:,offset:offset+size,:] = v
+        k = past_kv[key_id,:,:,0:offset+size,:]
+        v = past_kv[value_id,:,:,0:offset+size,:]
 
     FULL_T = k.shape[-2]
-
-    if use_cache is True:
-        present = (k, v)
-    else:
-        present = None
 
     att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
     att = att.masked_fill(attn_mask[FULL_T - T:FULL_T, :FULL_T], float('-inf'))
@@ -164,7 +164,7 @@ def multi_head_attention_forward(
     y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
     y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
     y = torch._C._nn.linear(y, opw, opb)
-    return (y, present)
+    return y
 
 
 class MultiheadAttention(Module):
@@ -595,10 +595,12 @@ class MultiheadAttention(Module):
               attn_mask: Optional[Tensor] = None,
               average_attn_weights: bool = True,
               past_kv = None,
-              use_cache = False
+              use_cache = False,
+              layer_id = 0,
+              offset = 0
               ):
         # x = x.transpose(1, 0)
-        y, kv = multi_head_attention_forward(
+        y = multi_head_attention_forward(
                 x=x,
                 ipw=self.in_proj_weight,
                 ipb=self.in_proj_bias,
@@ -608,5 +610,7 @@ class MultiheadAttention(Module):
                 attn_mask=attn_mask,
                 past_kv=past_kv,
                 use_cache=use_cache,
+                layer_id=layer_id,
+                offset=offset
         )
-        return (y, kv)
+        return y
