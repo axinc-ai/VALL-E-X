@@ -572,7 +572,7 @@ class VALLE(VALLF):
         x_attn_mask = torch.zeros((x_len, x_len), dtype=torch.bool)
 
         max_len = 1024 # TBD
-        kv_cache = torch.zeros((12 * 2, 1, 16, max_len, 64))
+        kv_cache = torch.zeros((12 * 2, 1, 16, max_len, 64)).to(x.device)
         kv_cache_numpy = np.zeros((12 * 2, 1, 16, max_len, 64), dtype=np.float32)
         offset = 0
         # torch.Size([1, 16, n, 64])が12レイヤー * 2ノード分ある
