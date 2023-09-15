@@ -137,6 +137,8 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent', args=
     global model, codec, vocos, text_tokenizer, text_collater
     if args.onnx_export:
         model.export_token_embedding()
+    if args.onnx_import:
+        model.import_token_embedding()
     text = text.replace("\n", "").strip(" ")
     # detect language
     if language == "auto":

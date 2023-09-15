@@ -26,7 +26,7 @@ import torch.nn.functional as F
 # from torchmetrics.classification import MulticlassAccuracy
 
 from data.input_strategies import PromptedFeatures
-from modules.embedding import SinePositionalEmbedding, TokenEmbedding
+from modules.embedding import SinePositionalEmbedding, TokenEmbedding, TokenEmbeddingLayers
 from modules.transformer import (
     AdaptiveLayerNorm,
     LayerNorm,
@@ -173,6 +173,8 @@ class VALLF(nn.Module):
                     for i in range(num_quantizers - 1)
                 ]
             )  # W_a
+
+            self.nar_audio_embedding_layers = None
 
             # PreNet
             if add_prenet:
@@ -493,12 +495,18 @@ class VALLE(VALLF):
             results[j, :, :, :] = self.nar_predict_layers[j](xy_pos)
         return results[i].reshape((xy_pos.shape[0], xy_pos.shape[1], xy_pos.shape[2]))
 
+    def create_token_embedding_layers(self):
+        if self.nar_audio_embedding_layers != None:
+            return
+        self.nar_audio_embedding_layers = TokenEmbeddingLayers(self.nar_audio_embeddings[1].dim_model, self.nar_audio_embeddings[1].vocab_size)
+        for i in range(self.num_quantizers - 1):
+            self.nar_audio_embedding_layers.set_weight(self.nar_audio_embeddings[i + 1], i)
+
     def export_token_embedding(self):
         self.ar_text_embedding.export_to_onnx("ar_text_embedding.onnx")
         self.nar_text_embedding.export_to_onnx("nar_text_embedding.onnx")
         self.ar_audio_embedding.export_to_onnx("ar_audio_embedding.onnx")
-        for i in range(len(self.nar_audio_embeddings)):
-            self.nar_audio_embeddings[i].export_to_onnx("nar_audio_embeddings_"+str(i)+".onnx")
+        self.nar_audio_embeddings[0].export_to_onnx("nar_audio_embedding.onnx")
         self.ar_language_embedding.export_to_onnx("ar_language_embedding.onnx")
         self.nar_language_embedding.export_to_onnx("nar_language_embedding.onnx")
 
@@ -508,6 +516,13 @@ class VALLE(VALLF):
         self.nar_audio_position.export_alpha("nar_audio_position", "position_embedding.onnx")
 
         self.nar_text_position.export_onnx("position_embedding.onnx") # no dropout
+
+        # Added for onnx
+        self.create_token_embedding_layers()
+        self.nar_audio_embedding_layers.export_to_onnx("nar_audio_embedding_layers.onnx")
+
+    def import_token_embedding(self):
+        self.create_token_embedding_layers()
 
     def inference(
         self,
@@ -816,12 +831,12 @@ class VALLE(VALLF):
                         print("xy_pos.shape",xy_pos.shape)
                         print("self.nar_weights.shape",self.nar_stage_embeddings[i].weight.shape)
                         self.forward = self.export_nar_decoder
-                        iv = torch.tensor([i], dtype=torch.int64)
-                        from torch.autograd import Variable
-                        iv = Variable(iv)
+                        #iv = torch.tensor([i], dtype=torch.int64)
+                        #from torch.autograd import Variable
+                        #iv = Variable(iv)
                         torch.onnx.export(
                             self,
-                            (xy_pos, iv),
+                            (xy_pos, i),
                             "nar_decoder.onnx",
                             input_names=["xy_pos", "i"],
                             output_names=["xy_dec"],
@@ -837,7 +852,7 @@ class VALLE(VALLF):
                         print("xy_dec.shape",xy_dec.shape)
                         torch.onnx.export(
                             self,
-                            (xy_dec[:, text_len + prefix_len :], iv),
+                            (xy_dec[:, text_len + prefix_len :], i),
                             "nar_predict_layers.onnx",
                             input_names=["xy_pos", "i"],
                             output_names=["logits"],
@@ -851,10 +866,11 @@ class VALLE(VALLF):
                     print("Impot nar_decoder from onnx")
                     if i == 0:
                         nar_decoder = ailia.Net(weight="nar_decoder.onnx", env_id = 1, memory_mode = 11)
-                    offset_tensor = np.zeros((1))
-                    offset_tensor[0] = i
+                    #offset_tensor = np.zeros((1))
+                    #offset_tensor[0] = i
+                    layer_idx_tensor = np.array(i, dtype=np.int64) 
                     print(xy_pos.shape, offset_tensor.shape)
-                    xy_dec = nar_decoder.run([xy_pos.numpy(), offset_tensor])[0] # Normal inference
+                    xy_dec = nar_decoder.run([xy_pos.numpy(), layer_idx_tensor])[0] # Normal inference
                     #xy_dec = nar_decoder.run([xy_pos.numpy()[:, 0:-1, :], offset_tensor])[0] # Test trim
                     end = int(round(time.time() * 1000))
                     xy_dec = torch.from_numpy(xy_dec)
@@ -864,7 +880,7 @@ class VALLE(VALLF):
                     print("Impot nar_predict_layers from onnx")
                     if i == 0:
                         nar_predict = ailia.Net(weight="nar_predict_layers.onnx", env_id = 1, memory_mode = 11)
-                    logits = nar_predict.run([xy_dec[:, text_len + prefix_len :].numpy(), offset_tensor])[0]
+                    logits = nar_predict.run([xy_dec[:, text_len + prefix_len :].numpy(), layer_idx_tensor])[0]
                     end = int(round(time.time() * 1000))
                     logits = torch.from_numpy(logits)
                     if benchmark:
@@ -874,7 +890,10 @@ class VALLE(VALLF):
                 codes.append(samples)
 
                 if i < self.num_quantizers - 2:
-                    y_emb[:, prefix_len:] += embedding_layer(samples)
+                    if onnx_import or onnx_export:
+                        y_emb[:, prefix_len:] += self.nar_audio_embedding_layers(samples, i)
+                    else:
+                        y_emb[:, prefix_len:] += embedding_layer(samples)
 
         assert len(codes) == self.num_quantizers
         return torch.stack(codes, dim=-1)
