@@ -18,6 +18,7 @@ import torch
 import torch.nn as nn
 
 import ailia
+import numpy as np
 
 class TokenEmbedding(nn.Module):
     def __init__(
@@ -103,13 +104,10 @@ class TokenEmbeddingLayers(nn.Module):
         self.word_embeddings[layer_id].weight = emb.weight#word_embeddings.weight
         
     def forward(self, x: torch.Tensor, layer_id):
-        #if self.onnx_mode:
-        #    return self.forward_onnx(x)
-        
-
+        if self.onnx_mode:
+            return self.forward_onnx(x, layer_id)
+       
         #print("Input", x.shape)
-        
-        #X = self.word_embeddings[layer_id](x)
 
         results = torch.zeros((7, x.shape[0], x.shape[1], self.dim_model))
         for j in range(7):
@@ -118,9 +116,11 @@ class TokenEmbeddingLayers(nn.Module):
 
         X = self.dropout(X)
 
-        #print("Output", X.shape)
-
         return X
+
+    def import_from_onnx(self, path):
+        self.onnx_mode = True
+        self.onnx_path = path
 
     def export_to_onnx(self, path):
         #print("Export token embeddings to "+path)
@@ -140,13 +140,14 @@ class TokenEmbeddingLayers(nn.Module):
             },
             verbose=False, opset_version=15
         )
-        return
+
         self.onnx_mode = True
         self.onnx_path = path
     
     def forward_onnx(self, x: torch.Tensor, layer_id):
         #print("Import token embeddings from "+self.onnx_path)
         anet = ailia.Net(weight=self.onnx_path, env_id = 1, memory_mode = 11)
+        layer_id = np.array(layer_id, dtype=np.int64)
         y = anet.run([x.numpy(), layer_id])[0]
         y = torch.from_numpy(y)
         return y

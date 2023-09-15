@@ -523,6 +523,7 @@ class VALLE(VALLF):
 
     def import_token_embedding(self):
         self.create_token_embedding_layers()
+        self.nar_audio_embedding_layers.import_from_onnx("nar_audio_embedding_layers.onnx")
 
     def inference(
         self,
