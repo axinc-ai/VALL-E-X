@@ -92,16 +92,19 @@ class SinePositionalEmbedding(nn.Module):
         self.dropout = torch.nn.Dropout(p=dropout)
 
         self.reverse = False
-        self.pe = None
-        self.extend_pe(torch.tensor(0.0).expand(1, 4000))
+        #self.pe = None
+        #self.extend_pe(torch.tensor(0.0).expand(1, 4000))
+
+        self.onnx_mode = False
+        self.onnx_path = False
 
     def extend_pe(self, x):
         """Reset the positional encodings."""
-        if self.pe is not None:
-            if self.pe.size(1) >= x.size(1):
-                if self.pe.dtype != x.dtype or self.pe.device != x.device:
-                    self.pe = self.pe.to(dtype=x.dtype, device=x.device)
-                return
+        #if self.pe is not None:
+        #    if self.pe.size(1) >= x.size(1):
+        #        if self.pe.dtype != x.dtype or self.pe.device != x.device:
+        #            self.pe = self.pe.to(dtype=x.dtype, device=x.device)
+        #        return
         pe = torch.zeros(x.size(1), self.dim_model)
         if self.reverse:
             position = torch.arange(
@@ -118,13 +121,58 @@ class SinePositionalEmbedding(nn.Module):
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0)
-        self.pe = pe.to(device=x.device, dtype=x.dtype).detach()
+        pe = pe.to(device=x.device, dtype=x.dtype).detach()
+        return pe
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        self.extend_pe(x)
+    def infer(self, x: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+        pe = self.extend_pe(x)
         output = x.unsqueeze(-1) if x.ndim == 2 else x
-        output = output * self.x_scale + self.alpha * self.pe[:, : x.size(1)]
+        output = output * self.x_scale + alpha * pe[:, : x.size(1)]
         return self.dropout(output)
 
-    def export_alpha(self, path):
-        print(path, "Alpha", self.alpha)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        #print(x.shape)
+        alpha_tensor = torch.tensor(self.alpha[0])
+        if self.onnx_mode:
+            #print("input", x.shape)
+            y = self.forward_onnx(x, alpha_tensor)
+            #print("output", y.shape)
+            return y
+        return self.infer(x, alpha_tensor)
+
+    def export_alpha(self, label, path):
+        print(path, "Export position embedding alpha", self.alpha)
+
+        self.onnx_mode = True
+        self.onnx_path = path
+
+    def export_onnx(self, path):
+        backup = self.forward
+        self.forward = self.infer
+
+        print("Export position embeddings to "+path)
+        x = torch.zeros((1, 46, self.dim_model)) # torch.Size([1, 46, 1024])
+        torch.onnx.export(
+            self,
+            (x, self.alpha),
+            path,
+            input_names=["x", "alpha"],
+            output_names=["y"],
+            dynamic_axes={
+                "x": [1],
+                "y": [1]
+            },
+            verbose=False, opset_version=15
+        )
+
+        self.onnx_mode = True
+        self.onnx_path = path
+
+        self.forward = backup
+
+    def forward_onnx(self, x: torch.Tensor, alpha: torch.Tensor):
+        #print("Import token embeddings from "+self.onnx_path)
+        anet = ailia.Net(weight=self.onnx_path, env_id = 1, memory_mode = 11)
+        y = anet.run([x.numpy(), alpha.numpy()])[0]
+        y = torch.from_numpy(y)
+        return y

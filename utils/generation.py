@@ -84,9 +84,6 @@ def preload_models():
     )
     assert not missing_keys
     model.eval()
-    onnx_export = False
-    if onnx_export:
-        model.export_token_embedding()
 
     # Encodec
     codec = AudioTokenizer(device)
@@ -127,16 +124,19 @@ def export_vocos(frames):
 
 
 @torch.no_grad()
-def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
+def generate_audio(text, prompt=None, language='auto', accent='no-accent', args=None):
     onnx_export = False
     onnx_import = False
-
-    onnx_export_vocos = False
-    onnx_import_vocos = False
-
     benchmark = False
 
+    if args != None:
+        onnx_export = args.onnx_export
+        onnx_import = args.onnx_import
+        benchmark = args.benchmark
+
     global model, codec, vocos, text_tokenizer, text_collater
+    if args.onnx_export:
+        model.export_token_embedding()
     text = text.replace("\n", "").strip(" ")
     # detect language
     if language == "auto":
@@ -196,7 +196,7 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
     # Decode with Vocos
     frames = encoded_frames.permute(2,0,1)
 
-    if not onnx_import_vocos or onnx_export_vocos:
+    if not onnx_import or onnx_export:
         features = vocos.codes_to_features(frames)
     
         # original
@@ -206,7 +206,7 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
         x = vocos.backbone(features, bandwidth_id=torch.tensor([2], device=device))
         samples = vocos.head(x) # isftf
 
-    if onnx_export_vocos:
+    if onnx_export:
         #print("vocos.codes_to_features input", frames.shape) # torch.Size([8, 1, 350])
         #print("vocos.codes_to_features output", features.shape) # torch.Size([1, 128, 350])
 
@@ -232,7 +232,7 @@ def generate_audio(text, prompt=None, language='auto', accent='no-accent'):
             verbose=False, opset_version=15
         )           
 
-    if onnx_import_vocos:
+    if onnx_import:
         print("Impot vocos from onnx")
         vnet = ailia.Net(weight="vocos.onnx", env_id = 1, memory_mode = 11)
         start = int(round(time.time() * 1000))

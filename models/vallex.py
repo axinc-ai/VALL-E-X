@@ -502,10 +502,12 @@ class VALLE(VALLF):
         self.ar_language_embedding.export_to_onnx("ar_language_embedding.onnx")
         self.nar_language_embedding.export_to_onnx("nar_language_embedding.onnx")
 
-        self.ar_text_position.export_alpha("ar_text_position")
-        self.nar_text_position.export_alpha("nar_text_position")
-        self.ar_audio_position.export_alpha("ar_audio_position")
-        self.nar_audio_position.export_alpha("nar_audio_position")
+        self.ar_text_position.export_alpha("ar_text_position", "position_embedding.onnx")
+        self.nar_text_position.export_alpha("nar_text_position", "position_embedding.onnx")
+        self.ar_audio_position.export_alpha("ar_audio_position", "position_embedding.onnx")
+        self.nar_audio_position.export_alpha("nar_audio_position", "position_embedding.onnx")
+
+        self.nar_text_position.export_onnx("position_embedding.onnx") # no dropout
 
     def inference(
         self,
